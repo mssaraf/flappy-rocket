@@ -1,0 +1,6 @@
+{
+  "name": "Neon Flap - 90s Retro Arcade",
+  "description": "An infinite side-scrolling retro arcade obstacle game inspired by Flappy Bird, featuring vibrant 90s neon aesthetics and responsive physics.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,768 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Neon Flap - 90s Retro Arcade</title>
+  <meta name="description" content="An infinite side-scrolling retro arcade obstacle game inspired by Flappy Bird, featuring vibrant 90s neon aesthetics.">
+  <meta property="og:title" content="Neon Flap - 90s Retro Arcade">
+  <meta property="og:description" content="An infinite side-scrolling retro arcade obstacle game inspired by Flappy Bird, featuring vibrant 90s neon aesthetics.">
+  <meta property="og:type" content="website">
+  <meta name="twitter:card" content="summary_large_image">
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-touch-callout: none;
+    }
+
+    body {
+      background-color: #0b0618;
+      background-image: radial-gradient(circle at 50% 50%, #1c0d38 0%, #070310 100%);
+      font-family: 'Courier New', Courier, monospace, system-ui;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      overflow: hidden;
+      color: #fff;
+    }
+
+    #game-container {
+      position: relative;
+      width: 100%;
+      max-width: 480px;
+      aspect-ratio: 9 / 16;
+      max-height: 96vh;
+      box-shadow: 0 0 35px rgba(255, 0, 128, 0.45), 0 0 0 4px #00f0ff;
+      border-radius: 12px;
+      overflow: hidden;
+      background: #0d0722;
+    }
+
+    canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+      cursor: pointer;
+    }
+
+    /* Sound toggle */
+    #sound-btn {
+      position: absolute;
+      top: 14px;
+      right: 14px;
+      background: rgba(13, 7, 34, 0.85);
+      border: 2px solid #00f0ff;
+      color: #00f0ff;
+      width: 38px;
+      height: 38px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      font-size: 18px;
+      z-index: 15;
+      box-shadow: 0 0 10px rgba(0, 240, 255, 0.5);
+      transition: transform 0.1s ease, box-shadow 0.1s ease;
+    }
+
+    #sound-btn:hover {
+      transform: scale(1.08);
+      box-shadow: 0 0 16px rgba(0, 240, 255, 0.8);
+    }
+  </style>
+</head>
+<body>
+  <div id="game-container">
+    <button id="sound-btn" title="Toggle Sound">🔊</button>
+    <canvas id="gameCanvas" width="450" height="800"></canvas>
+  </div>
+
+  <script>
+    (function () {
+      // ----------------------------------------------------
+      // CANVAS SETUP & CONSTANTS
+      // ----------------------------------------------------
+      const canvas = document.getElementById('gameCanvas');
+      const ctx = canvas.getContext('2d');
+      const soundBtn = document.getElementById('sound-btn');
+
+      const VIRTUAL_WIDTH = 450;
+      const VIRTUAL_HEIGHT = 800;
+
+      // Physics Constants
+      const GRAVITY = 0.46;
+      const FLAP_VELOCITY = -8.6;
+      const MAX_FALL_SPEED = 10.5; // Cap max fall speed for tight responsiveness
+      const OBSTACLE_SPEED = 2.8;
+      const PIPE_WIDTH = 68;
+      const PIPE_GAP = 175; // Comfortable, fun gap size
+      const PIPE_SPAWN_INTERVAL = 115; // In frames (~1.9s at 60fps)
+
+      // ----------------------------------------------------
+      // 8-BIT RETRO SYNTHESIZER (No external audio files)
+      // ----------------------------------------------------
+      let soundEnabled = true;
+      let audioCtx = null;
+
+      function initAudio() {
+        if (!audioCtx) {
+          const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+          if (AudioContextClass) {
+            audioCtx = new AudioContextClass();
+          }
+        }
+        if (audioCtx && audioCtx.state === 'suspended') {
+          audioCtx.resume();
+        }
+      }
+
+      function playSound(type) {
+        if (!soundEnabled || !audioCtx) return;
+        try {
+          const now = audioCtx.currentTime;
+          const osc = audioCtx.createOscillator();
+          const gain = audioCtx.createGain();
+          osc.connect(gain);
+          gain.connect(audioCtx.destination);
+
+          if (type === 'flap') {
+            osc.type = 'square';
+            osc.frequency.setValueAtTime(320, now);
+            osc.frequency.exponentialRampToValueAtTime(780, now + 0.08);
+            gain.gain.setValueAtTime(0.18, now);
+            gain.gain.linearRampToValueAtTime(0.01, now + 0.09);
+            osc.start(now);
+            osc.stop(now + 0.09);
+          } else if (type === 'score') {
+            osc.type = 'triangle';
+            osc.frequency.setValueAtTime(587.33, now);
+            osc.frequency.setValueAtTime(880, now + 0.07);
+            gain.gain.setValueAtTime(0.2, now);
+            gain.gain.linearRampToValueAtTime(0.01, now + 0.22);
+            osc.start(now);
+            osc.stop(now + 0.22);
+          } else if (type === 'hit') {
+            osc.type = 'sawtooth';
+            osc.frequency.setValueAtTime(180, now);
+            osc.frequency.exponentialRampToValueAtTime(35, now + 0.35);
+            gain.gain.setValueAtTime(0.35, now);
+            gain.gain.linearRampToValueAtTime(0.01, now + 0.36);
+            osc.start(now);
+            osc.stop(now + 0.36);
+          }
+        } catch (e) {
+          // Graceful fallback
+        }
+      }
+
+      soundBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        initAudio();
+        soundEnabled = !soundEnabled;
+        soundBtn.textContent = soundEnabled ? '🔊' : '🔇';
+      });
+
+      // ----------------------------------------------------
+      // GAME STATE & VARIABLES
+      // ----------------------------------------------------
+      let gameState = 'START'; // 'START', 'PLAYING', 'GAMEOVER'
+      let score = 0;
+      let highScore = parseInt(localStorage.getItem('neon_flap_highscore') || '0', 10);
+      let frameCount = 0;
+      let screenShake = 0;
+
+      // Player Ship / Character
+      const player = {
+        x: 100,
+        y: VIRTUAL_HEIGHT / 2 - 20,
+        width: 32,
+        height: 24,
+        vy: 0,
+        angle: 0
+      };
+
+      let pipes = [];
+      let particles = [];
+      let backgroundStars = [];
+
+      // Generate retro starfield
+      for (let i = 0; i < 65; i++) {
+        backgroundStars.push({
+          x: Math.random() * VIRTUAL_WIDTH,
+          y: Math.random() * VIRTUAL_HEIGHT,
+          size: Math.random() * 2.2 + 0.8,
+          speed: Math.random() * 0.8 + 0.3,
+          color: Math.random() > 0.5 ? '#00f0ff' : '#ff00aa',
+          alpha: Math.random() * 0.7 + 0.3
+        });
+      }
+
+      // ----------------------------------------------------
+      // INPUT HANDLING
+      // ----------------------------------------------------
+      function handleAction() {
+        initAudio();
+
+        if (gameState === 'START') {
+          gameState = 'PLAYING';
+          player.vy = FLAP_VELOCITY;
+          playSound('flap');
+          spawnThrustParticles();
+        } else if (gameState === 'PLAYING') {
+          player.vy = FLAP_VELOCITY;
+          playSound('flap');
+          spawnThrustParticles();
+        } else if (gameState === 'GAMEOVER') {
+          resetGame();
+          gameState = 'PLAYING';
+          player.vy = FLAP_VELOCITY;
+          playSound('flap');
+          spawnThrustParticles();
+        }
+      }
+
+      window.addEventListener('keydown', (e) => {
+        if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') {
+          e.preventDefault();
+          handleAction();
+        }
+      });
+
+      canvas.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        handleAction();
+      });
+
+      function spawnThrustParticles() {
+        for (let i = 0; i < 7; i++) {
+          particles.push({
+            x: player.x - 8,
+            y: player.y + (Math.random() * 10 - 5),
+            vx: -Math.random() * 3.5 - 1.5,
+            vy: (Math.random() - 0.5) * 2,
+            size: Math.random() * 4 + 2,
+            color: Math.random() > 0.4 ? '#ffea00' : '#ff0077',
+            alpha: 1,
+            decay: 0.05
+          });
+        }
+      }
+
+      function spawnCrashParticles(x, y) {
+        for (let i = 0; i < 35; i++) {
+          const angle = Math.random() * Math.PI * 2;
+          const spd = Math.random() * 6 + 1.5;
+          particles.push({
+            x,
+            y,
+            vx: Math.cos(angle) * spd,
+            vy: Math.sin(angle) * spd,
+            size: Math.random() * 5 + 2,
+            color: ['#ffea00', '#00f0ff', '#ff0077', '#ffffff'][Math.floor(Math.random() * 4)],
+            alpha: 1,
+            decay: 0.035
+          });
+        }
+      }
+
+      function spawnPipe() {
+        // Vertical gap margin: keep gap comfortably away from top and bottom edges
+        const minGapTop = 90;
+        const maxGapTop = VIRTUAL_HEIGHT - PIPE_GAP - 90;
+        const gapTop = minGapTop + Math.random() * (maxGapTop - minGapTop);
+
+        pipes.push({
+          x: VIRTUAL_WIDTH + 10,
+          width: PIPE_WIDTH,
+          gapTop: gapTop,
+          gapBottom: gapTop + PIPE_GAP,
+          passed: false,
+          colorTheme: Math.random() > 0.5 ? 'cyan' : 'pink'
+        });
+      }
+
+      function resetGame() {
+        score = 0;
+        frameCount = 0;
+        screenShake = 0;
+        player.x = 100;
+        player.y = VIRTUAL_HEIGHT / 2 - 20;
+        player.vy = 0;
+        player.angle = 0;
+        pipes = [];
+        particles = [];
+      }
+
+      // ----------------------------------------------------
+      // UPDATE FUNCTION
+      // ----------------------------------------------------
+      function update() {
+        // Update background stars
+        for (const star of backgroundStars) {
+          star.x -= star.speed;
+          if (star.x < 0) {
+            star.x = VIRTUAL_WIDTH;
+            star.y = Math.random() * VIRTUAL_HEIGHT;
+          }
+        }
+
+        // Screen shake decay
+        if (screenShake > 0) {
+          screenShake *= 0.85;
+          if (screenShake < 0.2) screenShake = 0;
+        }
+
+        // Particles update
+        for (let i = particles.length - 1; i >= 0; i--) {
+          const p = particles[i];
+          p.x += p.vx;
+          p.y += p.vy;
+          p.alpha -= p.decay;
+          if (p.alpha <= 0) {
+            particles.splice(i, 1);
+          }
+        }
+
+        if (gameState === 'START') {
+          // Gentle floating wave hover
+          frameCount++;
+          player.y = (VIRTUAL_HEIGHT / 2 - 20) + Math.sin(frameCount * 0.08) * 8;
+          player.angle = 0;
+          return;
+        }
+
+        if (gameState === 'GAMEOVER') {
+          // If in gameover, let player tumble down to the ground
+          if (player.y < VIRTUAL_HEIGHT - player.height / 2) {
+            player.vy += GRAVITY * 1.2;
+            player.y += player.vy;
+            player.angle += 0.15;
+          }
+          return;
+        }
+
+        // PLAYING STATE
+        frameCount++;
+
+        // 1. Apply Gravity & Cap Maximum Fall Speed
+        player.vy += GRAVITY;
+        if (player.vy > MAX_FALL_SPEED) {
+          player.vy = MAX_FALL_SPEED;
+        }
+        player.y += player.vy;
+
+        // Angle tilt based on velocity
+        if (player.vy < 0) {
+          player.angle = Math.max(-0.45, player.vy * 0.06);
+        } else {
+          player.angle = Math.min(1.1, player.vy * 0.08);
+        }
+
+        // 2. Ceiling & Floor Collision
+        const halfH = player.height / 2;
+        if (player.y - halfH <= 0 || player.y + halfH >= VIRTUAL_HEIGHT) {
+          triggerGameOver();
+          return;
+        }
+
+        // 3. Spawn Obstacle Columns
+        if (frameCount % PIPE_SPAWN_INTERVAL === 0) {
+          spawnPipe();
+        }
+
+        // 4. Update Pipes & Check Collisions
+        const playerLeft = player.x - player.width / 2 + 4;
+        const playerRight = player.x + player.width / 2 - 4;
+        const playerTop = player.y - player.height / 2 + 4;
+        const playerBottom = player.y + player.height / 2 - 4;
+
+        for (let i = pipes.length - 1; i >= 0; i--) {
+          const pipe = pipes[i];
+          pipe.x -= OBSTACLE_SPEED;
+
+          const pipeLeft = pipe.x;
+          const pipeRight = pipe.x + pipe.width;
+
+          // Collision Detection with Top and Bottom columns
+          const isInHorizontalRange = playerRight > pipeLeft && playerLeft < pipeRight;
+          if (isInHorizontalRange) {
+            // Hit top column or hit bottom column
+            if (playerTop < pipe.gapTop || playerBottom > pipe.gapBottom) {
+              triggerGameOver();
+              return;
+            }
+          }
+
+          // Scoring Check
+          if (!pipe.passed && playerLeft > pipeRight) {
+            pipe.passed = true;
+            score++;
+            playSound('score');
+            if (score > highScore) {
+              highScore = score;
+              localStorage.setItem('neon_flap_highscore', highScore.toString());
+            }
+          }
+
+          // Memory Management: Delete columns scrolling completely off the left
+          if (pipe.x + pipe.width < -10) {
+            pipes.splice(i, 1);
+          }
+        }
+      }
+
+      function triggerGameOver() {
+        gameState = 'GAMEOVER';
+        playSound('hit');
+        screenShake = 14;
+        spawnCrashParticles(player.x, player.y);
+      }
+
+      // ----------------------------------------------------
+      // DRAW FUNCTION
+      // ----------------------------------------------------
+      function draw() {
+        ctx.save();
+        ctx.clearRect(0, 0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT);
+
+        // Screen Shake
+        if (screenShake > 0) {
+          const shakeX = (Math.random() - 0.5) * screenShake * 2;
+          const shakeY = (Math.random() - 0.5) * screenShake * 2;
+          ctx.translate(shakeX, shakeY);
+        }
+
+        // 1. 90s Retro Background: Deep Synthwave Purple / Midnight Grid
+        const bgGrad = ctx.createLinearGradient(0, 0, 0, VIRTUAL_HEIGHT);
+        bgGrad.addColorStop(0, '#0c051f');
+        bgGrad.addColorStop(0.55, '#190a36');
+        bgGrad.addColorStop(1, '#2f083d');
+        ctx.fillStyle = bgGrad;
+        ctx.fillRect(0, 0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT);
+
+        // Retro Horizon Grid lines
+        ctx.strokeStyle = 'rgba(255, 0, 180, 0.16)';
+        ctx.lineWidth = 1;
+        for (let y = VIRTUAL_HEIGHT * 0.6; y < VIRTUAL_HEIGHT; y += 22) {
+          ctx.beginPath();
+          ctx.moveTo(0, y);
+          ctx.lineTo(VIRTUAL_WIDTH, y);
+          ctx.stroke();
+        }
+
+        // Stars
+        for (const star of backgroundStars) {
+          ctx.fillStyle = star.color;
+          ctx.globalAlpha = star.alpha;
+          ctx.fillRect(star.x, star.y, star.size, star.size);
+        }
+        ctx.globalAlpha = 1;
+
+        // 2. Draw Pipes (Columns)
+        for (const pipe of pipes) {
+          drawPipePair(pipe);
+        }
+
+        // 3. Draw Particles (Thruster fire & explosions)
+        for (const p of particles) {
+          ctx.save();
+          ctx.globalAlpha = Math.max(0, p.alpha);
+          ctx.fillStyle = p.color;
+          ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
+          ctx.restore();
+        }
+
+        // 4. Draw Player Character (Bright contrasting Neon Yellow polygonal ship)
+        if (gameState !== 'GAMEOVER' || player.y < VIRTUAL_HEIGHT + 20) {
+          drawPlayerShip(player);
+        }
+
+        // 5. Retro Ceiling and Floor Neon Boundary Lines
+        ctx.strokeStyle = '#00f0ff';
+        ctx.lineWidth = 3;
+        ctx.shadowColor = '#00f0ff';
+        ctx.shadowBlur = 8;
+        ctx.beginPath();
+        ctx.moveTo(0, 2);
+        ctx.lineTo(VIRTUAL_WIDTH, 2);
+        ctx.moveTo(0, VIRTUAL_HEIGHT - 2);
+        ctx.lineTo(VIRTUAL_WIDTH, VIRTUAL_HEIGHT - 2);
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+
+        ctx.restore(); // Undo screen shake
+
+        // 6. Heads Up Display (HUD)
+        if (gameState === 'PLAYING') {
+          drawHUD();
+        } else if (gameState === 'START') {
+          drawStartScreen();
+        } else if (gameState === 'GAMEOVER') {
+          drawGameOverScreen();
+        }
+      }
+
+      // ----------------------------------------------------
+      // DRAWING SUB-ROUTINES
+      // ----------------------------------------------------
+      function drawPipePair(pipe) {
+        const isCyan = pipe.colorTheme === 'cyan';
+        const primaryColor = isCyan ? '#00f0ff' : '#ff00aa';
+        const innerColor = isCyan ? '#083248' : '#450933';
+        const glowColor = isCyan ? 'rgba(0, 240, 255, 0.4)' : 'rgba(255, 0, 170, 0.4)';
+        const rimColor = '#ffffff';
+
+        const capHeight = 24;
+        const capOverhang = 6;
+
+        ctx.save();
+
+        // Top Column Body
+        ctx.fillStyle = innerColor;
+        ctx.fillRect(pipe.x, 0, pipe.width, pipe.gapTop - capHeight);
+
+        // Top Column Neon Borders & Grid Stripe
+        ctx.strokeStyle = primaryColor;
+        ctx.lineWidth = 3;
+        ctx.strokeRect(pipe.x, 0, pipe.width, pipe.gapTop - capHeight);
+
+        // Top Column Cap
+        ctx.fillStyle = innerColor;
+        ctx.fillRect(pipe.x - capOverhang, pipe.gapTop - capHeight, pipe.width + capOverhang * 2, capHeight);
+        ctx.strokeStyle = primaryColor;
+        ctx.lineWidth = 3.5;
+        ctx.strokeRect(pipe.x - capOverhang, pipe.gapTop - capHeight, pipe.width + capOverhang * 2, capHeight);
+
+        // Bottom Column Body
+        const bottomHeight = VIRTUAL_HEIGHT - (pipe.gapBottom + capHeight);
+        ctx.fillStyle = innerColor;
+        ctx.fillRect(pipe.x, pipe.gapBottom + capHeight, pipe.width, bottomHeight);
+        ctx.strokeStyle = primaryColor;
+        ctx.lineWidth = 3;
+        ctx.strokeRect(pipe.x, pipe.gapBottom + capHeight, pipe.width, bottomHeight);
+
+        // Bottom Column Cap
+        ctx.fillStyle = innerColor;
+        ctx.fillRect(pipe.x - capOverhang, pipe.gapBottom, pipe.width + capOverhang * 2, capHeight);
+        ctx.strokeStyle = primaryColor;
+        ctx.lineWidth = 3.5;
+        ctx.strokeRect(pipe.x - capOverhang, pipe.gapBottom, pipe.width + capOverhang * 2, capHeight);
+
+        // Vibrant Neon Highlights & Center Stripes
+        ctx.strokeStyle = rimColor;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        // Top cap lip
+        ctx.moveTo(pipe.x - capOverhang + 3, pipe.gapTop - 2);
+        ctx.lineTo(pipe.x + pipe.width + capOverhang - 3, pipe.gapTop - 2);
+        // Bottom cap lip
+        ctx.moveTo(pipe.x - capOverhang + 3, pipe.gapBottom + 2);
+        ctx.lineTo(pipe.x + pipe.width + capOverhang - 3, pipe.gapBottom + 2);
+        ctx.stroke();
+
+        ctx.restore();
+      }
+
+      function drawPlayerShip(p) {
+        ctx.save();
+        ctx.translate(p.x, p.y);
+        ctx.rotate(p.angle);
+
+        // Thruster engine flame
+        const flameLength = 8 + Math.random() * 8;
+        ctx.fillStyle = '#ff0055';
+        ctx.beginPath();
+        ctx.moveTo(-14, -5);
+        ctx.lineTo(-14 - flameLength, 0);
+        ctx.lineTo(-14, 5);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.fillStyle = '#ffee00';
+        ctx.beginPath();
+        ctx.moveTo(-14, -2.5);
+        ctx.lineTo(-14 - flameLength * 0.6, 0);
+        ctx.lineTo(-14, 2.5);
+        ctx.closePath();
+        ctx.fill();
+
+        // Neon Yellow Retro Polygonal Flyer
+        ctx.shadowColor = '#ffe600';
+        ctx.shadowBlur = 12;
+
+        // Outer Hull
+        ctx.fillStyle = '#ffea00';
+        ctx.beginPath();
+        ctx.moveTo(18, 0);       // Ship nose
+        ctx.lineTo(-12, -12);    // Top wing
+        ctx.lineTo(-6, -4);      // Top inner indent
+        ctx.lineTo(-14, 0);      // Engine back
+        ctx.lineTo(-6, 4);       // Bottom inner indent
+        ctx.lineTo(-12, 12);     // Bottom wing
+        ctx.closePath();
+        ctx.fill();
+
+        // Contrasting Bold Dark Outline
+        ctx.shadowBlur = 0;
+        ctx.strokeStyle = '#1a1000';
+        ctx.lineWidth = 2.5;
+        ctx.stroke();
+
+        // Cockpit canopy (Hot Neon Cyan)
+        ctx.fillStyle = '#00f0ff';
+        ctx.beginPath();
+        ctx.moveTo(4, -3);
+        ctx.lineTo(10, 0);
+        ctx.lineTo(4, 3);
+        ctx.lineTo(0, 0);
+        ctx.closePath();
+        ctx.fill();
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
+
+        ctx.restore();
+      }
+
+      function drawHUD() {
+        ctx.save();
+        ctx.textAlign = 'center';
+        ctx.font = '900 48px "Courier New", monospace, sans-serif';
+
+        // Neon Text Glow Effect
+        ctx.shadowColor = '#00f0ff';
+        ctx.shadowBlur = 15;
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText(score.toString(), VIRTUAL_WIDTH / 2, 75);
+
+        ctx.strokeStyle = '#00f0ff';
+        ctx.lineWidth = 2;
+        ctx.strokeText(score.toString(), VIRTUAL_WIDTH / 2, 75);
+        ctx.restore();
+      }
+
+      function drawStartScreen() {
+        ctx.save();
+        ctx.fillStyle = 'rgba(7, 3, 16, 0.75)';
+        ctx.fillRect(0, 0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT);
+
+        ctx.textAlign = 'center';
+
+        // Title
+        ctx.shadowColor = '#ff00aa';
+        ctx.shadowBlur = 20;
+        ctx.font = '900 46px "Courier New", monospace, sans-serif';
+        ctx.fillStyle = '#ff00aa';
+        ctx.fillText('NEON FLAP', VIRTUAL_WIDTH / 2, VIRTUAL_HEIGHT * 0.32);
+
+        ctx.shadowColor = '#00f0ff';
+        ctx.shadowBlur = 10;
+        ctx.font = '700 16px "Courier New", monospace, sans-serif';
+        ctx.fillStyle = '#00f0ff';
+        ctx.fillText('90s RETRO ARCADE', VIRTUAL_WIDTH / 2, VIRTUAL_HEIGHT * 0.37);
+
+        // Blinking Prompt Box
+        const isBlink = Math.floor(frameCount / 30) % 2 === 0;
+        if (isBlink) {
+          ctx.shadowColor = '#ffea00';
+          ctx.shadowBlur = 12;
+          ctx.font = '900 20px "Courier New", monospace, sans-serif';
+          ctx.fillStyle = '#ffea00';
+          ctx.fillText('PRESS SPACE TO FLAP', VIRTUAL_WIDTH / 2, VIRTUAL_HEIGHT * 0.65);
+          ctx.font = '700 14px "Courier New", monospace, sans-serif';
+          ctx.fillStyle = '#ffffff';
+          ctx.fillText('(OR TAP / CLICK SCREEN)', VIRTUAL_WIDTH / 2, VIRTUAL_HEIGHT * 0.69);
+        }
+
+        // Instructions
+        ctx.shadowBlur = 0;
+        ctx.font = '600 13px "Courier New", monospace, sans-serif';
+        ctx.fillStyle = '#a998cc';
+        ctx.fillText('NAVIGATE THROUGH THE NEON COLUMNS', VIRTUAL_WIDTH / 2, VIRTUAL_HEIGHT * 0.77);
+
+        if (highScore > 0) {
+          ctx.font = '700 15px "Courier New", monospace, sans-serif';
+          ctx.fillStyle = '#00f0ff';
+          ctx.fillText(`BEST SCORE: ${highScore}`, VIRTUAL_WIDTH / 2, VIRTUAL_HEIGHT * 0.83);
+        }
+
+        ctx.restore();
+      }
+
+      function drawGameOverScreen() {
+        ctx.save();
+        ctx.fillStyle = 'rgba(7, 3, 16, 0.82)';
+        ctx.fillRect(0, 0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT);
+
+        ctx.textAlign = 'center';
+
+        // GAME OVER Banner
+        ctx.shadowColor = '#ff0055';
+        ctx.shadowBlur = 25;
+        ctx.font = '900 48px "Courier New", monospace, sans-serif';
+        ctx.fillStyle = '#ff0055';
+        ctx.fillText('GAME OVER', VIRTUAL_WIDTH / 2, VIRTUAL_HEIGHT * 0.32);
+
+        // Score Card Box
+        const cardW = 320;
+        const cardH = 150;
+        const cardX = (VIRTUAL_WIDTH - cardW) / 2;
+        const cardY = VIRTUAL_HEIGHT * 0.38;
+
+        ctx.shadowColor = '#00f0ff';
+        ctx.shadowBlur = 15;
+        ctx.strokeStyle = '#00f0ff';
+        ctx.lineWidth = 2.5;
+        ctx.fillStyle = 'rgba(18, 9, 44, 0.9)';
+        ctx.strokeRect(cardX, cardY, cardW, cardH);
+        ctx.fillRect(cardX, cardY, cardW, cardH);
+        ctx.shadowBlur = 0;
+
+        ctx.font = '700 16px "Courier New", monospace, sans-serif';
+        ctx.fillStyle = '#a998cc';
+        ctx.fillText('SCORE', VIRTUAL_WIDTH / 2, cardY + 38);
+
+        ctx.font = '900 38px "Courier New", monospace, sans-serif';
+        ctx.fillStyle = '#ffea00';
+        ctx.fillText(score.toString(), VIRTUAL_WIDTH / 2, cardY + 78);
+
+        ctx.font = '700 15px "Courier New", monospace, sans-serif';
+        ctx.fillStyle = '#00f0ff';
+        ctx.fillText(`BEST: ${highScore}`, VIRTUAL_WIDTH / 2, cardY + 120);
+
+        // Restart Prompt
+        const isBlink = Math.floor(frameCount / 25) % 2 === 0;
+        if (isBlink) {
+          ctx.shadowColor = '#ff00aa';
+          ctx.shadowBlur = 12;
+          ctx.font = '900 20px "Courier New", monospace, sans-serif';
+          ctx.fillStyle = '#ff00aa';
+          ctx.fillText('PRESS SPACE TO RESTART', VIRTUAL_WIDTH / 2, VIRTUAL_HEIGHT * 0.70);
+          ctx.font = '700 13px "Courier New", monospace, sans-serif';
+          ctx.fillStyle = '#ffffff';
+          ctx.fillText('(OR TAP / CLICK)', VIRTUAL_WIDTH / 2, VIRTUAL_HEIGHT * 0.74);
+        }
+
+        ctx.restore();
+      }
+
+      // ----------------------------------------------------
+      // GAME LOOP (requestAnimationFrame)
+      // ----------------------------------------------------
+      function gameLoop() {
+        update();
+        draw();
+        requestAnimationFrame(gameLoop);
+      }
+
+      requestAnimationFrame(gameLoop);
+    })();
+  </script>
+</body>
+</html>
