@@ -96,9 +96,9 @@
       const VIRTUAL_HEIGHT = 800;
 
       // Physics Constants
-      const GRAVITY = 0.46;
-      const FLAP_VELOCITY = -8.6;
-      const MAX_FALL_SPEED = 10.5; // Cap max fall speed for tight responsiveness
+      const GRAVITY = 0.38;
+      const MAX_FALL_SPEED = 9.6; // Cap terminal fall speed for tight responsive control
+      const BASE_X = 110; // Natural horizontal equilibrium
       const OBSTACLE_SPEED = 2.8;
       const PIPE_WIDTH = 68;
       const PIPE_GAP = 175; // Comfortable, fun gap size
@@ -132,13 +132,13 @@
           gain.connect(audioCtx.destination);
 
           if (type === 'flap') {
-            osc.type = 'square';
-            osc.frequency.setValueAtTime(320, now);
-            osc.frequency.exponentialRampToValueAtTime(780, now + 0.08);
-            gain.gain.setValueAtTime(0.18, now);
-            gain.gain.linearRampToValueAtTime(0.01, now + 0.09);
+            osc.type = 'sawtooth';
+            osc.frequency.setValueAtTime(280, now);
+            osc.frequency.exponentialRampToValueAtTime(740, now + 0.11);
+            gain.gain.setValueAtTime(0.22, now);
+            gain.gain.linearRampToValueAtTime(0.01, now + 0.12);
             osc.start(now);
-            osc.stop(now + 0.09);
+            osc.stop(now + 0.12);
           } else if (type === 'score') {
             osc.type = 'triangle';
             osc.frequency.setValueAtTime(587.33, now);
@@ -177,14 +177,19 @@
       let frameCount = 0;
       let screenShake = 0;
 
-      // Player Ship / Character
+      // Realistic Aerodynamic Rocket State
       const player = {
-        x: 100,
+        x: BASE_X,
         y: VIRTUAL_HEIGHT / 2 - 20,
-        width: 32,
-        height: 24,
+        width: 36,
+        height: 22,
+        vx: 0,
         vy: 0,
-        angle: 0
+        angle: 0,            // Pitch angle in radians (negative = nose up, positive = dive)
+        angularVelocity: 0,  // Rotational velocity (pitch rate)
+        thrustTimer: 0,      // Rocket burn duration in frames
+        isThrusting: false,
+        flameIntensity: 0
       };
 
       let pipes = [];
@@ -204,26 +209,36 @@
       }
 
       // ----------------------------------------------------
-      // INPUT HANDLING
+      // INPUT HANDLING & ROCKET IGNITION
       // ----------------------------------------------------
+      function igniteRocket() {
+        player.thrustTimer = 10; // Sustained burn burst for authentic rocket thrust
+        player.isThrusting = true;
+        playSound('flap');
+
+        // Aerodynamic elevator & engine gimbal torque tilts nose upward
+        player.angularVelocity = Math.min(player.angularVelocity, 0) - 0.088;
+
+        // Upward impulse to immediately bite into downward momentum
+        player.vy = Math.min(player.vy * 0.28, 0) - 3.2;
+        // Subtle forward thrust kick
+        player.vx += 1.3;
+
+        spawnExhaustBurst();
+      }
+
       function handleAction() {
         initAudio();
 
         if (gameState === 'START') {
           gameState = 'PLAYING';
-          player.vy = FLAP_VELOCITY;
-          playSound('flap');
-          spawnThrustParticles();
+          igniteRocket();
         } else if (gameState === 'PLAYING') {
-          player.vy = FLAP_VELOCITY;
-          playSound('flap');
-          spawnThrustParticles();
+          igniteRocket();
         } else if (gameState === 'GAMEOVER') {
           resetGame();
           gameState = 'PLAYING';
-          player.vy = FLAP_VELOCITY;
-          playSound('flap');
-          spawnThrustParticles();
+          igniteRocket();
         }
       }
 
@@ -239,40 +254,85 @@
         handleAction();
       });
 
+      // Rocket Exhaust Emitter: Plumes eject directly backwards from rocket tail
       function spawnThrustParticles() {
-        for (let i = 0; i < 7; i++) {
+        const rearX = player.x - Math.cos(player.angle) * 18;
+        const rearY = player.y - Math.sin(player.angle) * 18;
+
+        for (let i = 0; i < 3; i++) {
+          const spread = (Math.random() - 0.5) * 0.45;
+          const exhaustAngle = player.angle + Math.PI + spread;
+          const speed = Math.random() * 5.5 + 3.5;
+
           particles.push({
-            x: player.x - 8,
-            y: player.y + (Math.random() * 10 - 5),
-            vx: -Math.random() * 3.5 - 1.5,
-            vy: (Math.random() - 0.5) * 2,
-            size: Math.random() * 4 + 2,
-            color: Math.random() > 0.4 ? '#ffea00' : '#ff0077',
+            x: rearX,
+            y: rearY,
+            vx: Math.cos(exhaustAngle) * speed + player.vx * 0.4,
+            vy: Math.sin(exhaustAngle) * speed + player.vy * 0.4,
+            size: Math.random() * 4.5 + 2.5,
+            color: ['#ffffff', '#ffea00', '#ff5500', '#ff0077'][Math.floor(Math.random() * 4)],
             alpha: 1,
-            decay: 0.05
+            decay: 0.048
           });
         }
       }
 
+      function spawnExhaustBurst() {
+        const rearX = player.x - Math.cos(player.angle) * 18;
+        const rearY = player.y - Math.sin(player.angle) * 18;
+
+        for (let i = 0; i < 10; i++) {
+          const spread = (Math.random() - 0.5) * 0.65;
+          const exhaustAngle = player.angle + Math.PI + spread;
+          const speed = Math.random() * 6.5 + 3.0;
+
+          particles.push({
+            x: rearX,
+            y: rearY,
+            vx: Math.cos(exhaustAngle) * speed + player.vx * 0.3,
+            vy: Math.sin(exhaustAngle) * speed + player.vy * 0.3,
+            size: Math.random() * 5 + 2,
+            color: ['#ffffff', '#ffff55', '#ff9900', '#ff0077'][Math.floor(Math.random() * 4)],
+            alpha: 1,
+            decay: 0.04
+          });
+        }
+      }
+
+      function spawnTrailSmoke() {
+        const rearX = player.x - Math.cos(player.angle) * 18;
+        const rearY = player.y - Math.sin(player.angle) * 18;
+
+        particles.push({
+          x: rearX,
+          y: rearY,
+          vx: -OBSTACLE_SPEED * 0.6 + (Math.random() - 0.5) * 0.8,
+          vy: (Math.random() - 0.5) * 0.8,
+          size: Math.random() * 3 + 2,
+          color: '#00f0ff',
+          alpha: 0.5,
+          decay: 0.03
+        });
+      }
+
       function spawnCrashParticles(x, y) {
-        for (let i = 0; i < 35; i++) {
+        for (let i = 0; i < 40; i++) {
           const angle = Math.random() * Math.PI * 2;
-          const spd = Math.random() * 6 + 1.5;
+          const spd = Math.random() * 7 + 1.5;
           particles.push({
             x,
             y,
             vx: Math.cos(angle) * spd,
             vy: Math.sin(angle) * spd,
-            size: Math.random() * 5 + 2,
-            color: ['#ffea00', '#00f0ff', '#ff0077', '#ffffff'][Math.floor(Math.random() * 4)],
+            size: Math.random() * 6 + 2,
+            color: ['#ffea00', '#00f0ff', '#ff0077', '#ff4400', '#ffffff'][Math.floor(Math.random() * 5)],
             alpha: 1,
-            decay: 0.035
+            decay: 0.03
           });
         }
       }
 
       function spawnPipe() {
-        // Vertical gap margin: keep gap comfortably away from top and bottom edges
         const minGapTop = 90;
         const maxGapTop = VIRTUAL_HEIGHT - PIPE_GAP - 90;
         const gapTop = minGapTop + Math.random() * (maxGapTop - minGapTop);
@@ -291,16 +351,21 @@
         score = 0;
         frameCount = 0;
         screenShake = 0;
-        player.x = 100;
+        player.x = BASE_X;
         player.y = VIRTUAL_HEIGHT / 2 - 20;
+        player.vx = 0;
         player.vy = 0;
         player.angle = 0;
+        player.angularVelocity = 0;
+        player.thrustTimer = 0;
+        player.isThrusting = false;
+        player.flameIntensity = 0;
         pipes = [];
         particles = [];
       }
 
       // ----------------------------------------------------
-      // UPDATE FUNCTION
+      // UPDATE FUNCTION (Realistic Aerodynamics & Ballistics)
       // ----------------------------------------------------
       function update() {
         // Update background stars
@@ -330,19 +395,33 @@
         }
 
         if (gameState === 'START') {
-          // Gentle floating wave hover
           frameCount++;
           player.y = (VIRTUAL_HEIGHT / 2 - 20) + Math.sin(frameCount * 0.08) * 8;
-          player.angle = 0;
+          player.angle = Math.sin(frameCount * 0.08) * 0.06;
           return;
         }
 
         if (gameState === 'GAMEOVER') {
-          // If in gameover, let player tumble down to the ground
+          // Realistic crash tumble & trajectory
           if (player.y < VIRTUAL_HEIGHT - player.height / 2) {
-            player.vy += GRAVITY * 1.2;
+            player.vy += GRAVITY * 1.25;
+            player.vx *= 0.96;
+            player.x += player.vx;
             player.y += player.vy;
-            player.angle += 0.15;
+            player.angle += player.angularVelocity;
+
+            if (frameCount % 3 === 0) {
+              particles.push({
+                x: player.x,
+                y: player.y,
+                vx: (Math.random() - 0.5) * 1.5,
+                vy: -Math.random() * 2,
+                size: Math.random() * 5 + 3,
+                color: '#ff3300',
+                alpha: 0.8,
+                decay: 0.04
+              });
+            }
           }
           return;
         }
@@ -350,35 +429,82 @@
         // PLAYING STATE
         frameCount++;
 
-        // 1. Apply Gravity & Cap Maximum Fall Speed
+        // 1. Rocket Booster Thrust Dynamics
+        if (player.thrustTimer > 0) {
+          player.thrustTimer--;
+          player.flameIntensity = Math.min(1.0, player.flameIntensity + 0.35);
+
+          // Vector thrust aligned with rocket heading
+          const thrustPower = 1.35;
+          const thrustAx = Math.cos(player.angle) * thrustPower * 0.65;
+          const thrustAy = Math.sin(player.angle) * thrustPower * 1.45;
+
+          player.vx += thrustAx;
+          player.vy += thrustAy - 0.45; // Counter gravity
+
+          spawnThrustParticles();
+        } else {
+          player.isThrusting = false;
+          player.flameIntensity = Math.max(0, player.flameIntensity - 0.12);
+
+          if (frameCount % 4 === 0) {
+            spawnTrailSmoke();
+          }
+        }
+
+        // 2. Gravity & Realistic Curved Ballistics (Does not fall straight!)
         player.vy += GRAVITY;
+
+        // Terminal velocity
         if (player.vy > MAX_FALL_SPEED) {
           player.vy = MAX_FALL_SPEED;
         }
+
+        // Aerodynamic horizontal sway & equilibrium restoration
+        player.vx += (BASE_X - player.x) * 0.038;
+        player.vx *= 0.92; // Horizontal air resistance
+        player.x += player.vx;
+
+        // Safety clamp on horizontal position
+        player.x = Math.max(65, Math.min(185, player.x));
         player.y += player.vy;
 
-        // Angle tilt based on velocity
-        if (player.vy < 0) {
-          player.angle = Math.max(-0.45, player.vy * 0.06);
-        } else {
-          player.angle = Math.min(1.1, player.vy * 0.08);
+        // 3. Realistic Aerodynamic Weather-cocking (Curved Dive & Nose Arc)
+        // Relative airflow comes from the front and below during freefall
+        const forwardAirSpeed = OBSTACLE_SPEED * 1.55 + (player.vx > 0 ? player.vx * 0.5 : 0);
+        const flightPathAngle = Math.atan2(player.vy, forwardAirSpeed);
+
+        // Stabilizing fins generate aerodynamic torque pulling nose toward flight vector
+        const angleDiff = flightPathAngle - player.angle;
+        player.angularVelocity += angleDiff * 0.092;
+
+        // Heavy nose-down momentum during descent creates smooth parabolic dive arc
+        if (player.vy > 0.5) {
+          player.angularVelocity += 0.011 * (player.vy / MAX_FALL_SPEED);
         }
 
-        // 2. Ceiling & Floor Collision
+        // Aerodynamic angular damping
+        player.angularVelocity *= 0.84;
+        player.angle += player.angularVelocity;
+
+        // Aerodynamic limits: pitch-up max -38° (-0.66 rad), dive max +70° (+1.22 rad)
+        player.angle = Math.max(-0.66, Math.min(1.22, player.angle));
+
+        // 4. Ceiling & Floor Collision
         const halfH = player.height / 2;
         if (player.y - halfH <= 0 || player.y + halfH >= VIRTUAL_HEIGHT) {
           triggerGameOver();
           return;
         }
 
-        // 3. Spawn Obstacle Columns
+        // 5. Spawn Obstacle Columns
         if (frameCount % PIPE_SPAWN_INTERVAL === 0) {
           spawnPipe();
         }
 
-        // 4. Update Pipes & Check Collisions
-        const playerLeft = player.x - player.width / 2 + 4;
-        const playerRight = player.x + player.width / 2 - 4;
+        // 6. Update Pipes & Check Collisions
+        const playerLeft = player.x - player.width / 2 + 5;
+        const playerRight = player.x + player.width / 2 - 5;
         const playerTop = player.y - player.height / 2 + 4;
         const playerBottom = player.y + player.height / 2 - 4;
 
@@ -392,7 +518,6 @@
           // Collision Detection with Top and Bottom columns
           const isInHorizontalRange = playerRight > pipeLeft && playerLeft < pipeRight;
           if (isInHorizontalRange) {
-            // Hit top column or hit bottom column
             if (playerTop < pipe.gapTop || playerBottom > pipe.gapBottom) {
               triggerGameOver();
               return;
@@ -420,7 +545,9 @@
       function triggerGameOver() {
         gameState = 'GAMEOVER';
         playSound('hit');
-        screenShake = 14;
+        screenShake = 15;
+        player.angularVelocity = (Math.random() - 0.5) * 0.35 + (player.vy > 0 ? 0.22 : -0.22);
+        player.vx = -OBSTACLE_SPEED * 0.8 + (Math.random() - 0.5) * 2;
         spawnCrashParticles(player.x, player.y);
       }
 
@@ -574,57 +701,140 @@
         ctx.translate(p.x, p.y);
         ctx.rotate(p.angle);
 
-        // Thruster engine flame
-        const flameLength = 8 + Math.random() * 8;
-        ctx.fillStyle = '#ff0055';
+        // Dynamic Rocket Thruster Plume
+        const isBurn = p.flameIntensity > 0.05;
+        if (isBurn) {
+          const flameLength = (16 + Math.random() * 14) * p.flameIntensity;
+          const flameSpread = (5 + Math.random() * 3) * p.flameIntensity;
+
+          // Outer Hot Pink / Red Flame
+          ctx.fillStyle = '#ff0055';
+          ctx.beginPath();
+          ctx.moveTo(-17, -flameSpread);
+          ctx.lineTo(-17 - flameLength * 1.25, 0);
+          ctx.lineTo(-17, flameSpread);
+          ctx.closePath();
+          ctx.fill();
+
+          // Mid Neon Orange / Yellow Core
+          ctx.fillStyle = '#ffaa00';
+          ctx.beginPath();
+          ctx.moveTo(-17, -flameSpread * 0.7);
+          ctx.lineTo(-17 - flameLength * 0.85, 0);
+          ctx.lineTo(-17, flameSpread * 0.7);
+          ctx.closePath();
+          ctx.fill();
+
+          // Inner Superheated White / Blue Shock Diamond
+          ctx.fillStyle = '#ffffff';
+          ctx.beginPath();
+          ctx.moveTo(-17, -flameSpread * 0.35);
+          ctx.lineTo(-17 - flameLength * 0.45, 0);
+          ctx.lineTo(-17, flameSpread * 0.35);
+          ctx.closePath();
+          ctx.fill();
+        } else {
+          // Idling pilot flame
+          ctx.fillStyle = 'rgba(0, 240, 255, 0.6)';
+          ctx.beginPath();
+          ctx.moveTo(-17, -2);
+          ctx.lineTo(-21 - Math.random() * 3, 0);
+          ctx.lineTo(-17, 2);
+          ctx.closePath();
+          ctx.fill();
+        }
+
+        // Rocket Thruster Bell / Nozzle
+        ctx.fillStyle = '#2a1a38';
+        ctx.strokeStyle = '#00f0ff';
+        ctx.lineWidth = 1.5;
         ctx.beginPath();
-        ctx.moveTo(-14, -5);
-        ctx.lineTo(-14 - flameLength, 0);
-        ctx.lineTo(-14, 5);
+        ctx.moveTo(-13, -4.5);
+        ctx.lineTo(-17, -6.5);
+        ctx.lineTo(-17, 6.5);
+        ctx.lineTo(-13, 4.5);
         ctx.closePath();
         ctx.fill();
-
-        ctx.fillStyle = '#ffee00';
-        ctx.beginPath();
-        ctx.moveTo(-14, -2.5);
-        ctx.lineTo(-14 - flameLength * 0.6, 0);
-        ctx.lineTo(-14, 2.5);
-        ctx.closePath();
-        ctx.fill();
-
-        // Neon Yellow Retro Polygonal Flyer
-        ctx.shadowColor = '#ffe600';
-        ctx.shadowBlur = 12;
-
-        // Outer Hull
-        ctx.fillStyle = '#ffea00';
-        ctx.beginPath();
-        ctx.moveTo(18, 0);       // Ship nose
-        ctx.lineTo(-12, -12);    // Top wing
-        ctx.lineTo(-6, -4);      // Top inner indent
-        ctx.lineTo(-14, 0);      // Engine back
-        ctx.lineTo(-6, 4);       // Bottom inner indent
-        ctx.lineTo(-12, 12);     // Bottom wing
-        ctx.closePath();
-        ctx.fill();
-
-        // Contrasting Bold Dark Outline
-        ctx.shadowBlur = 0;
-        ctx.strokeStyle = '#1a1000';
-        ctx.lineWidth = 2.5;
         ctx.stroke();
 
-        // Cockpit canopy (Hot Neon Cyan)
-        ctx.fillStyle = '#00f0ff';
+        // Top & Bottom Swept Stabilizing Rocket Fins
+        ctx.fillStyle = '#ff00aa';
+        ctx.strokeStyle = '#1a0524';
+        ctx.lineWidth = 1.8;
+
+        // Top Fin
         ctx.beginPath();
-        ctx.moveTo(4, -3);
-        ctx.lineTo(10, 0);
-        ctx.lineTo(4, 3);
-        ctx.lineTo(0, 0);
+        ctx.moveTo(-4, -6);
+        ctx.lineTo(-15, -13);
+        ctx.lineTo(-11, -5);
         ctx.closePath();
         ctx.fill();
+        ctx.stroke();
+
+        // Bottom Fin
+        ctx.beginPath();
+        ctx.moveTo(-4, 6);
+        ctx.lineTo(-15, 13);
+        ctx.lineTo(-11, 5);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+
+        // Main Rocket Fuselage
+        ctx.shadowColor = '#ffe600';
+        ctx.shadowBlur = 10;
+
+        ctx.fillStyle = '#ffea00';
+        ctx.beginPath();
+        // Nose tip
+        ctx.moveTo(20, 0);
+        // Top curvature
+        ctx.quadraticCurveTo(8, -8, -13, -6.5);
+        // Engine base
+        ctx.lineTo(-13, 6.5);
+        // Bottom curvature
+        ctx.quadraticCurveTo(8, 8, 20, 0);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.shadowBlur = 0;
+        ctx.strokeStyle = '#140c00';
+        ctx.lineWidth = 2.2;
+        ctx.stroke();
+
+        // Nose Cone Aerodynamic Fairing (Contrasting Hot Magenta)
+        ctx.fillStyle = '#ff00aa';
+        ctx.beginPath();
+        ctx.moveTo(20, 0);
+        ctx.quadraticCurveTo(14, -5.5, 7, -6.5);
+        ctx.lineTo(7, 6.5);
+        ctx.quadraticCurveTo(14, 5.5, 20, 0);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+
+        // Retro Cockpit Porthole (Cyan Glow)
+        ctx.fillStyle = '#00f0ff';
+        ctx.beginPath();
+        ctx.arc(0, 0, 4.2, 0, Math.PI * 2);
+        ctx.fill();
+
         ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 1.2;
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+
+        // Glass Glint Highlight
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.arc(-1.2, -1.2, 1.4, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Body Panel Racing Stripe
+        ctx.strokeStyle = '#ff00aa';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(-8, -6);
+        ctx.lineTo(-8, 6);
         ctx.stroke();
 
         ctx.restore();
@@ -674,7 +884,7 @@
           ctx.shadowBlur = 12;
           ctx.font = '900 20px "Courier New", monospace, sans-serif';
           ctx.fillStyle = '#ffea00';
-          ctx.fillText('PRESS SPACE TO FLAP', VIRTUAL_WIDTH / 2, VIRTUAL_HEIGHT * 0.65);
+          ctx.fillText('PRESS SPACE TO THRUST', VIRTUAL_WIDTH / 2, VIRTUAL_HEIGHT * 0.65);
           ctx.font = '700 14px "Courier New", monospace, sans-serif';
           ctx.fillStyle = '#ffffff';
           ctx.fillText('(OR TAP / CLICK SCREEN)', VIRTUAL_WIDTH / 2, VIRTUAL_HEIGHT * 0.69);
